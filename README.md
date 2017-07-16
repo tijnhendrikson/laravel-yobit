@@ -10,9 +10,7 @@ Add the service provider to your `config/app.php`:
  
  ``` 
  'providers' => [
- 
      Pepijnolivier\Yobit\YobitServiceProvider::class,
-     
  ],
  ```
  
@@ -30,9 +28,7 @@ Add the alias to your `config/app.php`:
 
 ```    
 'aliases' => [
-           
     'Yobit' => Pepijnolivier\Yobit\Yobit::class,
-           
 ],
 ```
 
