@@ -21,7 +21,6 @@ Edit the `config/yobit.php` or add Yobit api and secret in your `.env` file
 ```
 YOBIT_KEY={YOUR_API_KEY}
 YOBIT_SECRET={YOUR_API_SECRET}
-
 ```
 
 Add the alias to your `config/app.php`:
