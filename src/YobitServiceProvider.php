@@ -12,6 +12,7 @@ class YobitServiceProvider extends ServiceProvider
      */
     public function boot()
     {
+        $this->loadMigrationsFrom(__DIR__ . '/../database/migrations');
         $this->publishes([
             __DIR__ . '/../config/yobit.php' => config_path('yobit.php'),
         ], 'config');

@@ -1,6 +1,7 @@
 <?php
 namespace Pepijnolivier\Yobit;
 
+use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
 
 class Client implements ClientContract
@@ -43,7 +44,8 @@ class Client implements ClientContract
     public function getTickers(array $currencyPairs = [], $ignoreInvalid = false)
     {
         $impl = implode('-', $currencyPairs);
-        return $this->public('v3', "ticker/$impl", [
+        $urlFragment = "ticker/$impl";
+        return $this->public('v3', $urlFragment, [
            'ignore_invalid' => (int) $ignoreInvalid,
         ]);
     }
@@ -323,7 +325,7 @@ class Client implements ClientContract
         throw new \Exception("Unsupported Yobit API version: $version");
     }
 
-    private function tradeRequest($method, array $parameters = [])
+    private function tradeRequest($method, array $parameters = [], $isRetry=false)
     {
         $url = $this->tradingUrl;
 
@@ -334,8 +336,8 @@ class Client implements ClientContract
             throw new \Exception("Cannot execute Yobit trade request - invalid key/secret");
         }
 
-        // for now, this means that only 1 request per second is possible
-        $nonce = floor(microtime(true));
+        $authHash = sha1("$apiKey $apiSecret");
+        $nonce = $this->getNextNonce($authHash);
         $parameters['nonce'] = $nonce;
         $parameters['method'] = $method;
 
@@ -369,6 +371,94 @@ class Client implements ClientContract
         }
 
         $response = json_decode($response, true);
+
+        // if the nonce was too low, we should correct the given nonce to the current time, and retry
+        $error = isset($response['error']) ? strtolower($response['error']) : '';
+        if(str_contains($error, 'invalid nonce')) {
+            $currentTimeNonce = floor(microtime(true)); // current time
+            if(!$isRetry && ($nonce < $currentTimeNonce)) {
+                $this->correctNonce($authHash, $currentTimeNonce);
+                Log::warning("Yobit nonce $nonce was too low. Corrected to current unixtime, trying again...");
+                return $this->tradeRequest($method, $parameters, true);
+            }
+
+            $error = "Yobit nonce is too low: $nonce";
+            throw new \Exception($error);
+        }
+
         return $response;
+    }
+
+    /**
+     * @param string $authHash
+     * @param int $nonce
+     * @return bool
+     */
+    private function correctNonce(string $authHash, int $nonce) {
+        $currentNonceModel = YobitNonce::where('auth_hash', $authHash)->first();
+        return $currentNonceModel->update([
+            'nonce' => $nonce,
+        ]);
+    }
+
+    /**
+     * @param string $authHash
+     * @return int
+     */
+    private function getNextNonce(string $authHash) {
+        $currentNonceModel = YobitNonce::where('auth_hash', $authHash)->first();
+        if(empty($currentNonceModel)) {
+            $nonce = floor(microtime(true));
+            $currentNonceModel = YobitNonce::create([
+                'auth_hash' => $authHash,
+                'nonce'     => $nonce,
+            ]);
+        }
+
+        $currentNonce = $currentNonceModel->nonce;
+        $nextNonce = $currentNonce + 1;
+
+        $currentNonceModel->update([
+            'nonce' => $nextNonce,
+        ]);
+        return $nextNonce;
+    }
+
+    /**
+     * Yobit allows nonces starting from 1 up till 2147483646, which is the end of unix epoch
+     * 2147483646 = somewhere in the year 2038
+     *
+     * We don't want to limit ourselves to max. 1 request per minute, so
+     * let's start at the current unix timestamp time,
+     * and manually add 1 on each request.
+     *
+     * For now, just saving this in the storage folder
+     */
+    private function getNonceOld()
+    {
+        try {
+            $dir = storage_path('exchange/yobit/');
+            if(!file_exists($dir)) {
+                mkdir($dir, '0777', true);
+            }
+
+            $file = $dir . 'nonce.txt';
+
+            $nonce = (int) file_get_contents($file);
+            if(empty($nonce)) {
+                $nonce = floor(microtime(true));
+            }
+
+            $newNonce = $nonce+1;
+            file_put_contents($file, $newNonce);
+
+            return $nonce;
+        } catch(\Exception $e) {
+            Log::critical($e);
+
+            if(config('app.debug')) {
+                throw $e;
+            }
+        }
     }
 }
